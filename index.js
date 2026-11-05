@@ -217,3 +217,192 @@ app.get('/api/auth/me', async (req, res) => {
     res.status(401).json({ message: 'Unauthorized access.' })
   }
 })
+
+/* ============================== STUDIOS ============================== */
+
+const toStudio = (doc) => doc && ({ ...doc, _id: doc._id.toString() })
+
+// GET /api/studios/featured — top 6 rated / newest
+app.get('/api/studios/featured', async (req, res) => {
+  try {
+    const result = await studiosCollection
+      .find()
+      .sort({ rating: -1, createdAt: -1 })
+      .limit(6)
+      .toArray()
+    res.send(result.map(toStudio))
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to load featured studios.' })
+  }
+})
+
+// GET /api/studios/mine — listings owned by the logged-in host
+app.get('/api/studios/mine', verifyToken, async (req, res) => {
+  try {
+    const result = await studiosCollection
+      .find({ ownerEmail: req.user.email })
+      .sort({ createdAt: -1 })
+      .toArray()
+    res.send(result.map(toStudio))
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to load your listings.' })
+  }
+})
+
+// GET /api/studios?category=&search=&sort=&page=&limit=
+app.get('/api/studios', async (req, res) => {
+  try {
+    const { category, search, sort = 'newest', page = '1', limit = '9' } = req.query
+    const filter = {}
+
+    if (category && category !== 'All') {
+      // tolerant: "Photo Studio" and "Photo Studios" both match
+      const escaped = category
+        .trim()
+        .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        .replace(/\s+/g, '\\s+')
+        .replace(/s$/i, '')
+      filter.category = { $regex: new RegExp(`^${escaped}s?$`, 'i') }
+    }
+    if (search) {
+      filter.$or = [
+        { title: { $regex: search, $options: 'i' } },
+        { location: { $regex: search, $options: 'i' } },
+        { overview: { $regex: search, $options: 'i' } },
+      ]
+    }
+
+    const sortOption =
+      sort === 'price-asc' ? { hourlyRate: 1 }
+      : sort === 'price-desc' ? { hourlyRate: -1 }
+      : sort === 'rating' ? { rating: -1 }
+      : { createdAt: -1 }
+
+    const pageNumber = Number(page) || 1
+    const pageSize = Number(limit) || 9
+
+    const [studios, total] = await Promise.all([
+      studiosCollection.find(filter).sort(sortOption).skip((pageNumber - 1) * pageSize).limit(pageSize).toArray(),
+      studiosCollection.countDocuments(filter),
+    ])
+
+    res.send({
+      studios: studios.map(toStudio),
+      total,
+      page: pageNumber,
+      totalPages: Math.ceil(total / pageSize),
+    })
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to load studios.' })
+  }
+})
+
+// POST /api/studios — protected (Challenge 1)
+app.post('/api/studios', verifyToken, async (req, res) => {
+  try {
+    const { title, category, hourlyRate, securityDeposit, maxCapacity, location, image, gallery, amenities, overview } = req.body
+
+    if (!title || !category || !hourlyRate || !location || !image) {
+      return res.status(400).json({ message: 'Title, category, rate, location and image are required.' })
+    }
+
+    const newStudio = {
+      title,
+      category,
+      hourlyRate: Number(hourlyRate),
+      securityDeposit: Number(securityDeposit) || 0,
+      maxCapacity: Number(maxCapacity) || 1,
+      location,
+      image,
+      gallery: Array.isArray(gallery) ? gallery.filter(Boolean) : [],
+      amenities: Array.isArray(amenities) ? amenities : [],
+      overview: overview || '',
+      rating: 0,
+      reviewCount: 0,
+      ownerEmail: req.user.email,
+      ownerName: req.user.name,
+      createdAt: new Date(),
+    }
+
+    const result = await studiosCollection.insertOne(newStudio)
+    res.status(201).json({
+      message: 'Studio listed successfully.',
+      studio: toStudio({ ...newStudio, _id: result.insertedId }),
+    })
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to create studio listing.' })
+  }
+})
+
+// GET /api/studios/:id
+app.get('/api/studios/:id', async (req, res) => {
+  try {
+    const { id } = req.params
+    if (!ObjectId.isValid(id)) return res.status(400).json({ message: 'Invalid studio id.' })
+
+    const studio = await studiosCollection.findOne({ _id: new ObjectId(id) })
+    if (!studio) return res.status(404).json({ message: 'Studio not found.' })
+
+    const reviews = await bookingsCollection
+      .find({ studioId: id, status: 'Completed' })
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .toArray()
+
+    res.send({ ...toStudio(studio), reviews })
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to load studio details.' })
+  }
+})
+
+// PATCH /api/studios/:id — owner only (Challenge 1)
+app.patch('/api/studios/:id', verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params
+    if (!ObjectId.isValid(id)) return res.status(400).json({ message: 'Invalid studio id.' })
+
+    const studio = await studiosCollection.findOne({ _id: new ObjectId(id) })
+    if (!studio) return res.status(404).json({ message: 'Studio not found.' })
+    if (studio.ownerEmail !== req.user.email) {
+      return res.status(403).json({ message: 'Forbidden — you can only edit your own listings.' })
+    }
+
+    const allowed = ['title', 'category', 'hourlyRate', 'securityDeposit', 'maxCapacity', 'location', 'image', 'gallery', 'amenities', 'overview']
+    const update = {}
+    for (const key of allowed) {
+      if (req.body[key] !== undefined) update[key] = req.body[key]
+    }
+    if (update.hourlyRate) update.hourlyRate = Number(update.hourlyRate)
+    if (update.securityDeposit) update.securityDeposit = Number(update.securityDeposit)
+    if (update.maxCapacity) update.maxCapacity = Number(update.maxCapacity)
+
+    const result = await studiosCollection.findOneAndUpdate(
+      { _id: new ObjectId(id) },
+      { $set: update },
+      { returnDocument: 'after' }
+    )
+
+    res.send({ message: 'Studio updated successfully.', studio: toStudio(result) })
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to update studio.' })
+  }
+})
+
+// DELETE /api/studios/:id — owner only (Challenge 1)
+app.delete('/api/studios/:id', verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params
+    if (!ObjectId.isValid(id)) return res.status(400).json({ message: 'Invalid studio id.' })
+
+    const studio = await studiosCollection.findOne({ _id: new ObjectId(id) })
+    if (!studio) return res.status(404).json({ message: 'Studio not found.' })
+    if (studio.ownerEmail !== req.user.email) {
+      return res.status(403).json({ message: 'Forbidden — you can only delete your own listings.' })
+    }
+
+    await studiosCollection.deleteOne({ _id: new ObjectId(id) })
+    res.send({ message: 'Studio listing deleted successfully.' })
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to delete studio.' })
+  }
+})
