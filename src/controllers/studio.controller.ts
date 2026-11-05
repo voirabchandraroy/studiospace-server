@@ -32,7 +32,16 @@ export const getStudios = async (req: AuthRequest, res: Response) => {
 
     const filter: Record<string, unknown> = {};
 
-    if (category && category !== "All") filter.category = category;
+    if (category && category !== "All") {
+      // Tolerant match so "Photo Studio" and "Photo Studios" both hit the same
+      // listings — whichever wording a link or chip happens to use.
+      const escaped = category
+        .trim()
+        .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+        .replace(/\s+/g, "\\s+")
+        .replace(/s$/i, "");
+      filter.category = { $regex: new RegExp(`^${escaped}s?$`, "i") };
+    }
     if (search) {
       filter.$or = [
         { title: { $regex: search, $options: "i" } },
