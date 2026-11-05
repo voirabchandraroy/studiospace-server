@@ -36,7 +36,7 @@ cookie-parser · CORS · dotenv · ESM (`"type": "module"`)
 cd studiospace-server
 npm install
 cp .env.example .env      # add MONGODB_URI + JWT_SECRET
-npm start                 # http://localhost:5000
+npm start                 # http://localhost:8000
 # or
 npm run dev               # node --watch, restarts on save
 ```
@@ -75,28 +75,28 @@ npm run seed    # 8 studios + 2 accounts + 1 booking
 | POST | `/logout` | Clears the cookie |
 | GET | `/me` | Restores the session on page reload |
 
-### Studios — `/api/studios`
+### Studios — `/api`
 
 | Method | Endpoint | Auth | Description |
 | --- | --- | --- | --- |
-| GET | `/featured` | – | Top 6 studios (`.sort().limit(6)`) |
-| GET | `/mine` | ✅ | Listings owned by the logged-in host |
-| GET | `/` | – | `category`, `search`, `sort`, `page`, `limit` |
-| POST | `/` | ✅ | Create a listing |
-| GET | `/:id` | – | Single studio + recent reviews |
-| PATCH | `/:id` | ✅ | Update (owner only) |
-| DELETE | `/:id` | ✅ | Delete (owner only) |
+| GET | `/studios/featured` | – | Top 6 studios (`.sort().limit(6)`) |
+| GET | `/studios/mine` | ✅ | Listings owned by the logged-in host |
+| GET | `/studios` | – | `category`, `search`, `sort` (`price-asc` / `price-desc` / `rating`) |
+| POST | `/add-studio` | ✅ | Create a listing |
+| GET | `/studio/:id` | – | Single studio |
+| PATCH | `/studio/:id` | ✅ | Update (owner only) |
+| DELETE | `/studio/:id` | ✅ | Delete (owner only) |
 
-### Bookings — `/api/bookings`
+### Bookings — `/api`
 
 | Method | Endpoint | Auth | Description |
 | --- | --- | --- | --- |
-| POST | `/` | ✅ | Create a booking with status `Pending` |
-| GET | `/mine` | ✅ | Bookings I made as a guest |
-| GET | `/host` | ✅ | Requests received for my studios |
-| GET | `/studio/:id` | – | Taken slots for the availability calendar |
-| PATCH | `/:id/status` | ✅ | Pending → Confirmed → Completed / Cancelled |
-| DELETE | `/:id` | ✅ | Cancel a `Pending` booking |
+| POST | `/add-booking` | ✅ | Create a booking with status `Pending` |
+| GET | `/bookings` | ✅ | Bookings I made as a guest |
+| GET | `/bookings?host=true` | ✅ | Requests received for my studios |
+| GET | `/bookings/:studioId` | – | Taken slots for the availability calendar |
+| PATCH | `/booking/:id` | ✅ | `{ status }` — host: any status, guest: `Cancelled` only |
+| DELETE | `/booking/:id` | ✅ | Delete a `Pending` booking (guest or host) |
 
 ### Wishlist — `/api/wishlist`
 
