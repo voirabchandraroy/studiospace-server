@@ -136,14 +136,14 @@ app.post('/api/auth/logout', (req, res) => {
 /* ============================= STUDIOS ============================= */
 
 // POST /add-studio
-app.post('/add-studio', verifyToken, async (req, res) => {
+app.post('/api/add-studio', verifyToken, async (req, res) => {
   const data = { ...req.body, ownerEmail: req.user.email, ownerName: req.user.name, rating: 0, createdAt: new Date() }
   const result = await studiosCollection.insertOne(data)
   res.send(result)
 })
 
 // GET /studios
-app.get('/studios', async (req, res) => {
+app.get('/api/studios', async (req, res) => {
   const { category, search, sort } = req.query
   const filter = {}
   if (category && category !== 'All') filter.category = category
@@ -162,26 +162,26 @@ app.get('/studios', async (req, res) => {
 })
 
 // GET /studios/featured — top 6
-app.get('/studios/featured', async (req, res) => {
+app.get('/api/studios/featured', async (req, res) => {
   const result = await studiosCollection.find().sort({ rating: -1, createdAt: -1 }).limit(6).toArray()
   res.send(result)
 })
 
 // GET /studios/mine
-app.get('/studios/mine', verifyToken, async (req, res) => {
+app.get('/api/studios/mine', verifyToken, async (req, res) => {
   const result = await studiosCollection.find({ ownerEmail: req.user.email }).sort({ createdAt: -1 }).toArray()
   res.send(result)
 })
 
 // GET /studio/:id
-app.get('/studio/:id', async (req, res) => {
+app.get('/api/studio/:id', async (req, res) => {
   const { id } = req.params
   const result = await studiosCollection.findOne({ _id: new ObjectId(id) })
   res.send(result)
 })
 
 // PATCH /studio/:id
-app.patch('/studio/:id', verifyToken, async (req, res) => {
+app.patch('/api/studio/:id', verifyToken, async (req, res) => {
   const { id } = req.params
   const data = req.body
   const result = await studiosCollection.updateOne(
@@ -192,7 +192,7 @@ app.patch('/studio/:id', verifyToken, async (req, res) => {
 })
 
 // DELETE /studio/:id
-app.delete('/studio/:id', verifyToken, async (req, res) => {
+app.delete('/api/studio/:id', verifyToken, async (req, res) => {
   const { id } = req.params
   const result = await studiosCollection.deleteOne({ _id: new ObjectId(id), ownerEmail: req.user.email })
   res.json(result)
@@ -207,7 +207,7 @@ const toMinutes = (time) => {
 }
 
 // POST /add-booking — rejects slots that overlap a Confirmed booking
-app.post('/add-booking', verifyToken, async (req, res) => {
+app.post('/api/add-booking', verifyToken, async (req, res) => {
   const { studioId, date, startTime, endTime, note } = req.body
   const studio = await studiosCollection.findOne({ _id: new ObjectId(studioId) })
   if (!studio) return res.status(404).send({ message: 'Studio not found.' })
@@ -243,7 +243,7 @@ app.post('/add-booking', verifyToken, async (req, res) => {
 })
 
 // GET /bookings — ?email=guest (mine) or ?host=true (requests for my studios)
-app.get('/bookings', verifyToken, async (req, res) => {
+app.get('/api/bookings', verifyToken, async (req, res) => {
   if (req.query.host === 'true') {
     const mine = await studiosCollection.find({ ownerEmail: req.user.email }).toArray()
     const result = await bookingsCollection
@@ -261,7 +261,7 @@ app.get('/bookings', verifyToken, async (req, res) => {
 })
 
 // GET /bookings/:studioId — taken slots for the availability calendar
-app.get('/bookings/:studioId', async (req, res) => {
+app.get('/api/bookings/:studioId', async (req, res) => {
   const { studioId } = req.params
   const result = await bookingsCollection
     .find({ studioId, status: { $in: ['Confirmed', 'Pending'] } })
@@ -270,7 +270,7 @@ app.get('/bookings/:studioId', async (req, res) => {
 })
 
 // PATCH /booking/:id — { status }
-app.patch('/booking/:id', verifyToken, async (req, res) => {
+app.patch('/api/booking/:id', verifyToken, async (req, res) => {
   const { id } = req.params
   const result = await bookingsCollection.updateOne(
     { _id: new ObjectId(id) },
@@ -280,7 +280,7 @@ app.patch('/booking/:id', verifyToken, async (req, res) => {
 })
 
 // DELETE /booking/:id
-app.delete('/booking/:id', verifyToken, async (req, res) => {
+app.delete('/api/booking/:id', verifyToken, async (req, res) => {
   const { id } = req.params
   const result = await bookingsCollection.deleteOne({ _id: new ObjectId(id), status: 'Pending' })
   res.json(result)
@@ -290,13 +290,13 @@ app.delete('/booking/:id', verifyToken, async (req, res) => {
 /* ============================= WISHLIST ============================= */
 
 // GET /wishlist
-app.get('/wishlist', verifyToken, async (req, res) => {
+app.get('/api/wishlist', verifyToken, async (req, res) => {
   const result = await wishlistCollection.find({ userEmail: req.user.email }).toArray()
   res.send(result.map((i) => i.studioId))
 })
 
 // POST /wishlist/toggle
-app.post('/wishlist/toggle', verifyToken, async (req, res) => {
+app.post('/api/wishlist/toggle', verifyToken, async (req, res) => {
   const { studioId } = req.body
   const filter = { userEmail: req.user.email, studioId }
   const existing = await wishlistCollection.findOne(filter)
