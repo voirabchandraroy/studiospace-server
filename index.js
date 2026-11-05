@@ -406,3 +406,226 @@ app.delete('/api/studios/:id', verifyToken, async (req, res) => {
     res.status(500).json({ message: 'Failed to delete studio.' })
   }
 })
+
+/* ============================== BOOKINGS ============================== */
+
+const toBooking = (doc) => doc && ({ ...doc, _id: doc._id.toString() })
+
+// GET /api/bookings/host — requests received for my studios
+app.get('/api/bookings/host', verifyToken, async (req, res) => {
+  try {
+    const mine = await studiosCollection.find({ ownerEmail: req.user.email }).toArray()
+    const ids = mine.map((s) => s._id.toString())
+    const result = await bookingsCollection
+      .find({ studioId: { $in: ids } })
+      .sort({ createdAt: -1 })
+      .toArray()
+    res.send(result.map(toBooking))
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to load host bookings.' })
+  }
+})
+
+// GET /api/bookings/mine — reservations I made as a guest
+app.get('/api/bookings/mine', verifyToken, async (req, res) => {
+  try {
+    const result = await bookingsCollection
+      .find({ userEmail: req.user.email })
+      .sort({ createdAt: -1 })
+      .toArray()
+    res.send(result.map(toBooking))
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to load bookings.' })
+  }
+})
+
+// GET /api/bookings/studio/:id — taken slots for the availability calendar
+app.get('/api/bookings/studio/:id', async (req, res) => {
+  try {
+    const result = await bookingsCollection
+      .find({ studioId: req.params.id, status: { $in: ['Confirmed', 'Pending'] } })
+      .toArray()
+    res.send(result.map(toBooking))
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to load studio availability.' })
+  }
+})
+
+// POST /api/bookings — Challenge 2: reject overlapping confirmed slots
+app.post('/api/bookings', verifyToken, async (req, res) => {
+  try {
+    const { studioId, date, startTime, endTime, note } = req.body
+
+    if (!studioId || !date || !startTime || !endTime) {
+      return res.status(400).json({ message: 'Studio, date and time range are required.' })
+    }
+    if (!ObjectId.isValid(studioId)) {
+      return res.status(400).json({ message: 'Invalid studio id.' })
+    }
+    if (toMinutes(endTime) <= toMinutes(startTime)) {
+      return res.status(400).json({ message: 'End time must be later than the start time.' })
+    }
+
+    const studio = await studiosCollection.findOne({ _id: new ObjectId(studioId) })
+    if (!studio) return res.status(404).json({ message: 'Studio not found.' })
+    if (studio.ownerEmail === req.user.email) {
+      return res.status(400).json({ message: 'You cannot book your own studio space.' })
+    }
+
+    const confirmed = await bookingsCollection
+      .find({ studioId, date, status: 'Confirmed' })
+      .toArray()
+
+    const collision = confirmed.find((b) => hasOverlap(b, startTime, endTime))
+    if (collision) {
+      return res.status(409).json({
+        message: `This studio is already booked on ${date} from ${collision.startTime} to ${collision.endTime}. Please pick another slot.`,
+      })
+    }
+
+    const hours = (toMinutes(endTime) - toMinutes(startTime)) / 60
+    const booking = {
+      studioId,
+      studioTitle: studio.title,
+      studioImage: studio.image,
+      location: studio.location,
+      hourlyRate: studio.hourlyRate,
+      userEmail: req.user.email,
+      userName: req.user.name,
+      date,
+      startTime,
+      endTime,
+      hours,
+      totalCost: hours * studio.hourlyRate,
+      note: note || '',
+      status: 'Pending',
+      createdAt: new Date(),
+    }
+
+    const result = await bookingsCollection.insertOne(booking)
+    res.status(201).json({
+      message: 'Booking request sent. Status: Pending.',
+      booking: toBooking({ ...booking, _id: result.insertedId }),
+    })
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to create booking.' })
+  }
+})
+
+// PATCH /api/bookings/:id/status  { status }
+app.patch('/api/bookings/:id/status', verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params
+    const { status } = req.body
+    const allowed = ['Pending', 'Confirmed', 'Completed', 'Cancelled']
+
+    if (!status || !allowed.includes(status)) {
+      return res.status(400).json({ message: 'Invalid booking status.' })
+    }
+    if (!ObjectId.isValid(id)) return res.status(400).json({ message: 'Invalid booking id.' })
+
+    const booking = await bookingsCollection.findOne({ _id: new ObjectId(id) })
+    if (!booking) return res.status(404).json({ message: 'Booking not found.' })
+
+    const studio = await studiosCollection.findOne({ _id: new ObjectId(booking.studioId) })
+    const isGuest = booking.userEmail === req.user.email
+    const isHost = studio?.ownerEmail === req.user.email
+    if (!isGuest && !isHost) {
+      return res.status(403).json({ message: 'Forbidden — not your booking.' })
+    }
+
+    // re-check conflicts when a host confirms a slot
+    if (status === 'Confirmed') {
+      const conflicts = await bookingsCollection
+        .find({ studioId: booking.studioId, date: booking.date, status: 'Confirmed', _id: { $ne: new ObjectId(id) } })
+        .toArray()
+
+      const collision = conflicts.find((b) => hasOverlap(b, booking.startTime, booking.endTime))
+      if (collision) {
+        return res.status(409).json({
+          message: `Cannot confirm — overlaps a confirmed booking (${collision.startTime}–${collision.endTime}).`,
+        })
+      }
+    }
+
+    const result = await bookingsCollection.findOneAndUpdate(
+      { _id: new ObjectId(id) },
+      { $set: { status } },
+      { returnDocument: 'after' }
+    )
+
+    res.send({ message: `Booking marked as ${status}.`, booking: toBooking(result) })
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to update booking status.' })
+  }
+})
+
+// DELETE /api/bookings/:id — guest cancels a Pending booking
+app.delete('/api/bookings/:id', verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params
+    if (!ObjectId.isValid(id)) return res.status(400).json({ message: 'Invalid booking id.' })
+
+    const booking = await bookingsCollection.findOne({ _id: new ObjectId(id) })
+    if (!booking) return res.status(404).json({ message: 'Booking not found.' })
+    if (booking.userEmail !== req.user.email) {
+      return res.status(403).json({ message: 'Forbidden — not your booking.' })
+    }
+    if (booking.status !== 'Pending') {
+      return res.status(400).json({ message: `Only pending bookings can be cancelled (current: ${booking.status}).` })
+    }
+
+    await bookingsCollection.deleteOne({ _id: new ObjectId(id) })
+    res.send({ message: 'Booking cancelled successfully.' })
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to cancel booking.' })
+  }
+})
+
+/* ============================== WISHLIST ============================== */
+
+// GET /api/wishlist
+app.get('/api/wishlist', verifyToken, async (req, res) => {
+  try {
+    const items = await wishlistCollection.find({ userEmail: req.user.email }).toArray()
+    res.send(items.map((i) => i.studioId))
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to load wishlist.' })
+  }
+})
+
+// POST /api/wishlist/toggle  { studioId }
+app.post('/api/wishlist/toggle', verifyToken, async (req, res) => {
+  try {
+    const { studioId } = req.body
+    if (!studioId) return res.status(400).json({ message: 'studioId is required.' })
+
+    const email = req.user.email
+    const existing = await wishlistCollection.findOne({ userEmail: email, studioId })
+
+    if (existing) {
+      await wishlistCollection.deleteOne({ userEmail: email, studioId })
+      return res.send({ saved: false, message: 'Removed from your saved studios.' })
+    }
+
+    await wishlistCollection.insertOne({ userEmail: email, studioId, createdAt: new Date() })
+    res.status(201).send({ saved: true, message: 'Added to your saved studios.' })
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to update wishlist.' })
+  }
+})
+
+/* ------------------- 404 + error handler + listen ------------------- */
+app.use((req, res) => {
+  res.status(404).json({ success: false, message: 'API route not found.' })
+})
+
+app.use((err, req, res, next) => {
+  console.error(err.message)
+  res.status(500).json({ success: false, message: 'Internal server error.' })
+})
+
+// http://localhost:5000
+app.listen(PORT, () => {
+  console.log(`Server is running at ${PORT}`)
+})
