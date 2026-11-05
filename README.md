@@ -1,14 +1,32 @@
 # StudioSpace — Server
 
-Express + MongoDB REST API for the StudioSpace peer-to-peer studio marketplace.
+Peer-to-Peer Creative Workspace & Production Studio Sharing Platform — API.
 
 **Live API:** `https://studiospace-server.onrender.com` _(replace with your Render URL)_
 
 ---
 
+## Project structure
+
+```
+studiospace-server/
+├── index.js           ← the whole API (Express + MongoDB, ESM)
+├── package.json
+├── package-lock.json
+├── .gitignore
+├── .env               ← not committed
+└── seed.js            ← optional demo data (safe to delete before submitting)
+```
+
+Everything lives in `index.js` — app setup, MongoDB connection, auth, studio CRUD,
+bookings, wishlist. No controllers / routes / middleware folders.
+
+---
+
 ## Tech stack
 
-Express.js · MongoDB (native driver) · TypeScript · JSON Web Token · bcryptjs · cookie-parser · CORS · Helmet · Morgan
+Express 5 · MongoDB (native driver) · JSON Web Token (HTTPOnly cookie) · bcryptjs ·
+cookie-parser · CORS · dotenv · ESM (`"type": "module"`)
 
 ---
 
@@ -16,34 +34,32 @@ Express.js · MongoDB (native driver) · TypeScript · JSON Web Token · bcryptj
 
 ```bash
 cd studiospace-server
-
 npm install
-
-cp .env.example .env      # then fill in MONGODB_URI and JWT_SECRET
-
-npm run dev               # http://localhost:5000
+cp .env.example .env      # add MONGODB_URI + JWT_SECRET
+npm start                 # http://localhost:5000
+# or
+npm run dev               # node --watch, restarts on save
 ```
 
-Optional — spin up a throwaway local MongoDB and load demo data:
+Optional demo data:
 
 ```bash
-npm run mongo     # terminal A: starts mongod on 27017
-npm run seed      # terminal B: inserts 8 studios + 2 accounts + 1 booking
+npm run seed    # 8 studios + 2 accounts + 1 booking
 ```
 
 ---
 
-## Environment variables
+## Environment variables (`.env`)
 
 | Variable | Example | Notes |
 | --- | --- | --- |
-| `PORT` | `5000` | Render supplies this automatically |
-| `MONGODB_URI` | `mongodb+srv://user:pass@cluster0.xxxxx.mongodb.net/` | MongoDB Atlas connection string |
-| `DB_NAME` | `studiospace` | Database name |
-| `JWT_SECRET` | `a_very_long_random_string` | Signs the auth token |
-| `JWT_EXPIRES_IN` | `7d` | Token lifetime |
-| `CLIENT_URL` | `http://localhost:3000` | CORS origin(s), comma-separated |
-| `NODE_ENV` | `development` | `production` enables `secure` + `SameSite=none` cookies |
+| `PORT` | `5000` | Render sets this automatically |
+| `MONGODB_URI` | `mongodb+srv://user:pass@cluster0.xxxxx.mongodb.net/` | Atlas connection string |
+| `DB_NAME` | `studiospace` | |
+| `JWT_SECRET` | `a_very_long_random_string` | signs the auth token |
+| `JWT_EXPIRES_IN` | `7d` | token lifetime |
+| `CLIENT_URL` | `http://localhost:3000` | CORS origin(s), comma separated |
+| `NODE_ENV` | `development` | `production` → `secure` + `SameSite=none` cookie |
 
 ---
 
@@ -51,23 +67,23 @@ npm run seed      # terminal B: inserts 8 studios + 2 accounts + 1 booking
 
 ### Auth — `/api/auth`
 
-| Method | Endpoint | Auth | Description |
-| --- | --- | --- | --- |
-| POST | `/register` | – | Create an account (validates password rules) |
-| POST | `/login` | – | Log in and receive the HTTPOnly JWT cookie |
-| POST | `/google` | – | Upsert a Firebase/Google user and issue a cookie |
-| POST | `/logout` | – | Clear the auth cookie |
-| GET | `/me` | cookie | Restore the session on page reload |
+| Method | Endpoint | Description |
+| --- | --- | --- |
+| POST | `/register` | Create account (validates 6 chars + upper + lower) |
+| POST | `/login` | Log in, sets the HTTPOnly JWT cookie |
+| POST | `/google` | Firebase/Google sign-in (upserts the user) |
+| POST | `/logout` | Clears the cookie |
+| GET | `/me` | Restores the session on page reload |
 
 ### Studios — `/api/studios`
 
 | Method | Endpoint | Auth | Description |
 | --- | --- | --- | --- |
 | GET | `/featured` | – | Top 6 studios (`.sort().limit(6)`) |
-| GET | `/` | – | List with `category`, `search`, `sort`, `page`, `limit` |
 | GET | `/mine` | ✅ | Listings owned by the logged-in host |
-| GET | `/:id` | – | Single studio + recent reviews |
+| GET | `/` | – | `category`, `search`, `sort`, `page`, `limit` |
 | POST | `/` | ✅ | Create a listing |
+| GET | `/:id` | – | Single studio + recent reviews |
 | PATCH | `/:id` | ✅ | Update (owner only) |
 | DELETE | `/:id` | ✅ | Delete (owner only) |
 
@@ -75,11 +91,11 @@ npm run seed      # terminal B: inserts 8 studios + 2 accounts + 1 booking
 
 | Method | Endpoint | Auth | Description |
 | --- | --- | --- | --- |
-| POST | `/` | ✅ | Create a booking, status `Pending` |
-| GET | `/mine` | ✅ | Bookings made by the user |
-| GET | `/host` | ✅ | Requests received for the user's studios |
+| POST | `/` | ✅ | Create a booking with status `Pending` |
+| GET | `/mine` | ✅ | Bookings I made as a guest |
+| GET | `/host` | ✅ | Requests received for my studios |
 | GET | `/studio/:id` | – | Taken slots for the availability calendar |
-| PATCH | `/:id/status` | ✅ | Host/guest status change |
+| PATCH | `/:id/status` | ✅ | Pending → Confirmed → Completed / Cancelled |
 | DELETE | `/:id` | ✅ | Cancel a `Pending` booking |
 
 ### Wishlist — `/api/wishlist`
@@ -89,36 +105,30 @@ npm run seed      # terminal B: inserts 8 studios + 2 accounts + 1 booking
 | GET | `/` | ✅ | Saved studio ids |
 | POST | `/toggle` | ✅ | Add / remove a saved studio |
 
-✅ = protected by the `verifyToken` middleware; returns **401 Unauthorized** without a valid cookie.
+✅ = protected by `verifyToken`; returns **401 Unauthorized** without a valid cookie.
 
 ---
 
-## Challenge implementations
+## Challenges
 
-**Challenge 1 — JWT security with HTTPOnly cookies.**
-Every mutation (`POST /api/studios`, `PATCH|DELETE /api/studios/:id`, `POST /api/bookings`, `PATCH|DELETE /api/bookings/:id`, wishlist) sits behind `verifyToken`, which reads the JWT from an `httpOnly` cookie that browser JavaScript cannot access. Missing, invalid or expired tokens are rejected with `401 Unauthorized`.
+**1 — JWT security with HTTPOnly cookies.**
+Every mutation runs through `verifyToken`, which reads the JWT from an `httpOnly`
+cookie that browser JavaScript cannot touch. Missing, invalid or expired tokens get
+`401 Unauthorized`.
 
-**Challenge 2 — booking double-booking prevention.**
-Before saving a reservation, the API queries all `Confirmed` bookings for that studio and date and applies the overlap rule `existing.start < new.end && existing.end > new.start`. Collisions are rejected with `409 Conflict` and a message naming the occupied range. The same check re-runs when a host tries to confirm a slot.
+**2 — Booking double-booking prevention.**
+Before saving a reservation the API loads all `Confirmed` bookings for that studio
+and date and applies `existing.start < new.end && existing.end > new.start`.
+Collisions return `409 Conflict` naming the occupied range. The same check re-runs
+when a host confirms a slot.
 
-**Challenge 3 — theme customization.**
-`next-themes` powers a navbar toggle that switches the entire app between light and dark, persisting the choice to `localStorage` and applying on first paint.
+**3 — Theme customization** (client side, `next-themes`) — light ⇄ dark toggle.
 
 ---
 
-## Project structure
+## Examiner test credentials
 
-```
-server/
-├── scripts/
-│   ├── dev-mongo.js      # throwaway local mongod for development
-│   └── seed.ts           # demo studios, accounts and bookings
-└── src/
-    ├── index.ts               # express app, middleware, routes, error handler
-    ├── config/db.ts           # Mongo client + collection helpers
-    ├── controllers/           # auth, studio, booking, wishlist
-    ├── lib/jwt.ts             # sign / verify + cookie options
-    ├── middleware/verifyToken.ts
-    ├── routes/
-    └── types.ts
-```
+| Role | Email | Password |
+| --- | --- | --- |
+| Guest / creator | `examiner@studiospace.com` | `Exam@1234` |
+| Studio host | `host@studiospace.com` | `Exam@1234` |
