@@ -194,4 +194,5 @@ app.use((err, req, res, next) => {
   res.status(badId ? 400 : 500).send({ message: badId ? 'Invalid id.' : 'Something went wrong.' })
 })
 
-app.listen(PORT, () => console.log(`Server is running at ${PORT}`)) 
+if (!process.env.VERCEL) app.listen(PORT, () => console.log(`Server is running at ${PORT}`))
+export default app
